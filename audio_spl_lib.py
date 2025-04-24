@@ -1125,6 +1125,170 @@ def plot_ai_band_details(
         print(f"Error saving AI Detail plot {output_filename}: {e}")
     plt.close(fig)
 
+# --- NEW AI DETAIL COMPARISON PLOTTING FUNCTION ---
+def plot_comparison_ai_band_details(
+    data_by_vehicle, # Dict: {vehicle_name: ai_details_dict} for ONE setting
+    title,
+    output_filename,
+    width,
+    height,
+    vehicle_color_map, # Dict: {vehicle_name: color_string}
+    y_min=PLOT_AI_DETAIL_Y_MIN_DB, # Reuse existing AI detail limits
+    y_max=PLOT_AI_DETAIL_Y_MAX_DB
+):
+    """
+    Creates a grouped bar chart comparing AI Band Details (SPL, Limits)
+    across multiple vehicles for a single setting.
+
+    Args:
+        data_by_vehicle (dict): {vehicle_name: ai_details_dict}.
+                                ai_details_dict is the output from
+                                get_ai_calculation_details for one setting.
+        title (str): Plot title.
+        output_filename (str): Path to save the SVG file.
+        width (float): Plot width in inches.
+        height (float): Plot height in inches.
+        vehicle_color_map (dict): {vehicle_name: color_string}. Maps vehicles to bar colors.
+        y_min (float, optional): Minimum SPL for plot y-axis. Defaults to PLOT_AI_DETAIL_Y_MIN_DB.
+        y_max (float, optional): Maximum SPL for plot y-axis. Defaults to PLOT_AI_DETAIL_Y_MAX_DB.
+    """
+    vehicle_names = sorted(data_by_vehicle.keys()) # Consistent order
+    num_vehicles = len(vehicle_names)
+    if num_vehicles == 0:
+        print(f"Warning: No AI detail data provided for comparison plot '{title}'. Skipping.")
+        return
+
+    fig, ax = plt.subplots(figsize=(width, height))
+
+    # --- Determine Frequency Bands and Filter ---
+    # Use the standard AI frequencies as the basis
+    plot_freqs = AI_FREQUENCIES
+    num_freqs = len(plot_freqs)
+    if num_freqs == 0:
+        print(f"Warning: No AI frequencies defined. Cannot create AI detail comparison plot '{title}'.")
+        plt.close(fig)
+        return
+
+    x_indices = np.arange(num_freqs) # One group per AI frequency band
+
+    # --- Define Bar/Group Widths EARLY --- <<< MOVED UP
+    total_group_width = 0.8
+    bar_width = total_group_width / num_vehicles
+    group_start_offset = -total_group_width / 2
+
+    # --- Plot AI Limit Lines (Once per band) ---
+    # Extract limits from the standard AI parameters
+    lower_limits_std = np.array([AI_PARAMETERS.get(f, (np.nan,))[0] for f in plot_freqs])
+    upper_limits_std = np.array([AI_PARAMETERS.get(f, (np.nan, np.nan))[1] for f in plot_freqs])
+
+    limit_line_width_factor = 0.9
+    limit_line_offset = (total_group_width * limit_line_width_factor) / 2
+
+    limit_lines_handles = [] # Handles specifically for legend
+    added_ll_legend = False
+    added_ul_legend = False
+    for i in range(num_freqs):
+        x_pos = x_indices[i]
+        # Plot lower limit line segment across the group width
+        if np.isfinite(lower_limits_std[i]):
+            # *** FIX: Add label here, use "_nolegend_" after the first one ***
+            ll_label = 'AI Lower Limit' if not added_ll_legend else "_nolegend_"
+            ll = ax.hlines(lower_limits_std[i], x_pos - limit_line_offset, x_pos + limit_line_offset,
+                       colors='red', linestyles='solid', linewidth=PLOT_LINEWIDTH * 1.5, zorder=3,
+                       label=ll_label) # <-- ADDED LABEL ARGUMENT
+            if not added_ll_legend:
+                 limit_lines_handles.append(ll) # Add handle only once for legend
+                 added_ll_legend = True
+        # Plot upper limit line segment across the group width
+        if np.isfinite(upper_limits_std[i]):
+            # *** FIX: Add label here, use "_nolegend_" after the first one ***
+            ul_label = 'AI Upper Limit' if not added_ul_legend else "_nolegend_"
+            ul = ax.hlines(upper_limits_std[i], x_pos - limit_line_offset, x_pos + limit_line_offset,
+                       colors='green', linestyles='solid', linewidth=PLOT_LINEWIDTH * 1.5, zorder=3,
+                       label=ul_label) # <-- ADDED LABEL ARGUMENT
+            if not added_ul_legend:
+                 limit_lines_handles.append(ul) # Add handle only once for legend
+                 added_ul_legend = True
+
+
+    # --- Plot Grouped Bars for Vehicle SPLs ---
+    ax.set_ylim(y_min, y_max)
+    plotted_something = False
+    bar_handles = {} # FIXED: Use a dictionary to store handles by vehicle name
+
+    for i, vehicle_name in enumerate(vehicle_names):
+        ai_details = data_by_vehicle[vehicle_name]
+        # Extract SPL values for this vehicle, ensuring order matches plot_freqs
+        spl_values_vehicle = np.array([ai_details['spl_values'].get(f, np.nan) for f in plot_freqs])
+
+        # Process NaN/Inf before clipping/plotting
+        plot_data_proc = np.where(np.isfinite(spl_values_vehicle), spl_values_vehicle, np.nan)
+        # Clip finite values to plot range
+        plot_data_clipped = np.clip(plot_data_proc, y_min, y_max)
+
+        bar_positions = x_indices + group_start_offset + (i * bar_width) + bar_width / 2
+        vehicle_color = vehicle_color_map.get(vehicle_name, None) # Get color, default to None
+
+        # Only plot if there's at least one non-NaN value after processing
+        if not np.all(np.isnan(plot_data_clipped)):
+            # Calculate bar heights relative to y_min
+            bar_heights = np.nan_to_num(plot_data_clipped, nan=y_min) - y_min
+            bar_heights[bar_heights < 0] = 0 # Ensure height is not negative
+
+            bars = ax.bar(
+                bar_positions,
+                bar_heights,
+                bar_width,
+                bottom=y_min,
+                label=vehicle_name, # Correctly set here
+                color=vehicle_color,
+                linewidth=PLOT_BAR_LINEWIDTH,
+                edgecolor='black',
+                zorder=2
+            )
+            # FIXED: Store the handle with the vehicle name as key
+            bar_handles[vehicle_name] = bars[0]
+            plotted_something = True
+
+    if not plotted_something:
+        print(f"Warning: No valid SPL data found within plot range/limits for AI detail comparison plot '{title}'. Skipping.")
+        plt.close(fig)
+        return
+
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("1/3 Octave Band SPL (dBA)") # AI Details always use dBA
+    ax.set_title(title)
+
+    ax.set_xticks(x_indices)
+    ax.set_xticklabels([f"{f:g}" for f in plot_freqs], rotation=PLOT_XTICK_ROTATION, ha='right')
+    ax.tick_params(axis='x', which='minor', bottom=False)
+    if num_freqs > 0:
+        ax.set_xlim(x_indices[0] - 0.5, x_indices[-1] + 0.5)
+    else:
+        ax.set_xlim(-0.5, 0.5)
+
+    ax.yaxis.grid(True, linestyle=':', linewidth=PLOT_GRID_LINEWIDTH, alpha=PLOT_GRID_ALPHA, zorder=1)
+    ax.xaxis.grid(False)
+
+    # --- Create Legend ---
+    # FIXED: Create a list of handles in the same order as vehicle_names
+    all_legend_handles = [bar_handles[name] for name in vehicle_names if name in bar_handles]
+    all_legend_handles.extend(limit_lines_handles)
+    
+    # Check if we actually have handles to avoid errors/warnings
+    if all_legend_handles:
+        # FIXED: Let matplotlib use the labels from the artists
+        ax.legend(fontsize='small')
+
+    plt.tight_layout()
+    try:
+        # Ensure output directory exists before saving
+        os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+        plt.savefig(output_filename, format='svg', bbox_inches='tight')
+        print(f"AI Detail comparison plot saved to: {output_filename}")
+    except Exception as e:
+        print(f"Error saving AI Detail comparison plot {output_filename}: {e}")
+    plt.close(fig)
 
 # --- NEW LOUDNESS PLOTTING FUNCTION ---
 def plot_loudness_by_setting(

@@ -97,7 +97,8 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
             dict: {setting_label: octave_spl_array (dBA or dBZ)} for the vehicle, or None.
             dict: {setting_label: (nb_freqs, nb_spl (dBA or dBZ))} for the vehicle, or None.
             dict: {setting_label: ai_value} for the vehicle, or None.
-            dict: {setting_label: loudness_value (Sones)} for the vehicle, or None. # Added Loudness
+            dict: {setting_label: loudness_value (Sones)} for the vehicle, or None.
+            dict: {setting_label: ai_details_dict} for the vehicle, or None. # <-- ADDED AI DETAILS
             str: The determined vehicle name, or None.
             str: The base directory used for output, or None.
         )
@@ -109,7 +110,8 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
     vehicle_octave_data = {}
     vehicle_narrowband_data = {}
     vehicle_ai_data = {}
-    vehicle_loudness_data = {} # Added dictionary for loudness
+    vehicle_loudness_data = {}
+    vehicle_ai_details_data = {} # <-- ADDED dictionary for AI details
 
     # Check for A-weighting requirement for AI *before* processing files
     if not APPLY_A_WEIGHTING_TO_PLOTS:
@@ -123,7 +125,8 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
 
     if not os.path.exists(input_path):
         print(f"Error: Path not found - {input_path}")
-        return gain_offsets_db, None, None, None, None, None, None # Added None for loudness
+        # Make sure to return the correct number of None values
+        return gain_offsets_db, None, None, None, None, None, None, None
 
     if os.path.isfile(input_path):
         if input_path.lower().endswith('.txt'):
@@ -154,7 +157,7 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
             print(f"Processing single file: {input_path}. Vehicle name assumed: '{vehicle_name}'. Output in: {base_dir}")
         else:
             print(f"Error: Input file must be a .txt file. Provided: {input_path}")
-            return gain_offsets_db, None, None, None, None, None, None # Added None for loudness
+            return gain_offsets_db, None, None, None, None, None, None, None # Added None for ai_details
 
     elif os.path.isdir(input_path):
         is_directory_input = True
@@ -175,7 +178,7 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
 
         if not found_txt:
             print(f"No .txt files found in directory: {input_path}")
-            return gain_offsets_db, None, None, None, None, None, None # Added None for loudness
+            return gain_offsets_db, None, None, None, None, None, None, None # Added None for ai_details
 
         try:
             # Use the sort key function from the library
@@ -188,11 +191,11 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
 
     else:
         print(f"Error: Input path is neither a file nor a directory - {input_path}")
-        return gain_offsets_db, None, None, None, None, None, None # Added None for loudness
+        return gain_offsets_db, None, None, None, None, None, None, None # Added None for ai_details
 
     if not filepaths:
         print(f"No valid .txt files to process for path: {input_path}")
-        return gain_offsets_db, None, None, None, None, None, None # Added None for loudness
+        return gain_offsets_db, None, None, None, None, None, None, None # Added None for ai_details
 
     # --- Get Gain Offset ---
     gain_offset = None
@@ -254,13 +257,17 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
 
             # --- Articulation Index Calculation (Requires dBA) ---
             ai_value = np.nan # Default to NaN
-            ai_details = None
+            ai_details = None # Initialize ai_details for this file
             if APPLY_A_WEIGHTING_TO_PLOTS:
                 # If plots are A-weighted, octave_spl_final is already dBA
                 octave_spl_a = octave_spl_final
+                # Calculate AI details using the library function
                 ai_details = spl.get_ai_calculation_details(spl.NOMINAL_FREQUENCIES, octave_spl_a)
-                ai_value = ai_details['total_ai']
-                print(f"  Calculated Articulation Index (AI): {ai_value:.2f}%")
+                if ai_details: # Check if calculation was successful
+                    ai_value = ai_details['total_ai']
+                    print(f"  Calculated Articulation Index (AI): {ai_value:.2f}%")
+                else:
+                    print("  Warning: AI calculation failed.") # Should not happen if inputs are valid
             else:
                 # Need to calculate A-weighted octave SPL separately for AI
                 print("  Calculating A-weighted SPL specifically for AI...")
@@ -269,10 +276,13 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
                     nb_audacity_db, gain_offset, nb_freqs, apply_a_weighting=True
                 )
                 octave_spl_a = spl.calculate_third_octave_spl(nb_freqs, nb_spl_a_for_ai, band_definitions)
+                # Calculate AI details using the library function
                 ai_details = spl.get_ai_calculation_details(spl.NOMINAL_FREQUENCIES, octave_spl_a)
-                ai_value = ai_details['total_ai']
-                print(f"  Calculated Articulation Index (AI): {ai_value:.2f}%")
-                # Note: The main octave_spl_final variable remains dBZ for plotting if APPLY_A_WEIGHTING_TO_PLOTS is False
+                if ai_details:
+                    ai_value = ai_details['total_ai']
+                    print(f"  Calculated Articulation Index (AI): {ai_value:.2f}%")
+                else:
+                     print("  Warning: AI calculation failed.")
 
             # --- Loudness Calculation (Requires dBZ) ---
             loudness_value_sone = np.nan # Default to NaN
@@ -286,21 +296,6 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
                 if np.any(valid_loudness_indices):
                     freqs_for_loudness = nb_freqs[valid_loudness_indices]
                     rms_pressure_for_loudness = rms_pressure[valid_loudness_indices]
-
-                    # --- BEGIN DEBUG BLOCK ---
-                    # Check the actual frequency range being passed to MOSQITO
-                    min_freq_passed = np.min(freqs_for_loudness)
-                    max_freq_passed = np.max(freqs_for_loudness)
-                    # print(f"  DEBUG: Frequencies passed to MOSQITO - Min: {min_freq_passed:.2f} Hz, Max: {max_freq_passed:.2f} Hz")
-                    # print(f"  DEBUG: Number of frequency points passed: {len(freqs_for_loudness)}")
-
-                    # Check if the range meets the standard's ideal minimum/maximum
-                    # if min_freq_passed > 24:
-                    #     print(f"  DEBUG: Minimum frequency {min_freq_passed:.2f} Hz is > 24 Hz. Low frequencies might be zero-filled by MOSQITO.")
-                    # if max_freq_passed < 24000:
-                    #     print(f"  DEBUG: Maximum frequency {max_freq_passed:.2f} Hz is < 24 kHz. High frequencies might be zero-filled by MOSQITO.")
-                    # --- END DEBUG BLOCK ---
-
 
                     # Ensure spectrum is not all zeros
                     if np.any(rms_pressure_for_loudness > spl.SMALL_EPSILON):
@@ -327,6 +322,9 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
                 vehicle_octave_data[setting_label] = octave_spl_final # Store dBA or dBZ based on flag
                 vehicle_ai_data[setting_label] = ai_value # Store AI value (always dBA based)
                 vehicle_loudness_data[setting_label] = loudness_value_sone # Store Loudness value
+                # Store the full AI details dictionary if it was calculated
+                if ai_details is not None:
+                    vehicle_ai_details_data[setting_label] = ai_details # <-- STORE AI DETAILS
 
                 if is_directory_input: # Only store NB data if processing a directory
                     vehicle_narrowband_data[setting_label] = (nb_freqs, nb_spl_final) # Store dBA or dBZ
@@ -374,8 +372,8 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
                 color=vehicle_color
             )
 
-            # AI Detail Plot (Only if AI was calculated)
-            if ai_details is not None: # Check if details exist (implies AI was calculated)
+            # AI Detail Plot (Only if AI details were successfully calculated)
+            if ai_details is not None: # Check if details exist
                 ai_detail_title = f"{base_title} - AI Band SPL & Limits"
                 spl.plot_ai_band_details(
                     ai_details, # Pass the detailed results
@@ -418,11 +416,14 @@ def process_input_path(input_path, gain_offsets_db, band_definitions, vehicle_co
     returned_octave_data = vehicle_octave_data if is_directory_input and vehicle_octave_data else None
     returned_narrowband_data = vehicle_narrowband_data if is_directory_input and vehicle_narrowband_data else None
     returned_ai_data = vehicle_ai_data if is_directory_input and vehicle_ai_data else None
-    returned_loudness_data = vehicle_loudness_data if is_directory_input and vehicle_loudness_data else None # Added loudness
+    returned_loudness_data = vehicle_loudness_data if is_directory_input and vehicle_loudness_data else None
+    # Return the AI details data as well
+    returned_ai_details_data = vehicle_ai_details_data if is_directory_input and vehicle_ai_details_data else None # <-- ADDED
     returned_vehicle_name = vehicle_name if is_directory_input else None
     returned_base_dir = base_dir if is_directory_input else None # Return base_dir only for directories
 
-    return gain_offsets_db, returned_octave_data, returned_narrowband_data, returned_ai_data, returned_loudness_data, returned_vehicle_name, returned_base_dir
+    # Update the return statement signature
+    return gain_offsets_db, returned_octave_data, returned_narrowband_data, returned_ai_data, returned_loudness_data, returned_ai_details_data, returned_vehicle_name, returned_base_dir
 
 
 # --- Main Execution ---
@@ -438,6 +439,7 @@ if __name__ == "__main__":
     all_vehicles_narrowband_data = {}
     all_vehicles_ai_data = {}
     all_vehicles_loudness_data = {} # Added loudness data store
+    all_vehicles_ai_details_data = {} # <-- ADDED data store for AI details
     vehicle_color_map = {}
     vehicle_base_dir_map = {} # Store base output directory for each vehicle
 
@@ -505,8 +507,9 @@ if __name__ == "__main__":
         # Process each path
         for path in INPUT_PATHS:
             print(f"\n--- Processing Input: {path} ---")
-            # Call local processing function (now returns loudness data and base_dir)
-            gain_offsets_db, vehicle_octave_data, vehicle_narrowband_data, vehicle_ai_data, vehicle_loudness_data, vehicle_name, base_dir = process_input_path(
+            # Call local processing function (now returns ai_details_data)
+            # Update the unpacking of the return tuple
+            gain_offsets_db, vehicle_octave_data, vehicle_narrowband_data, vehicle_ai_data, vehicle_loudness_data, vehicle_ai_details_data, vehicle_name, base_dir = process_input_path(
                 path, gain_offsets_db, band_definitions, vehicle_color_map
             )
             # Store results if valid (process_input_path now returns None for data if not directory)
@@ -518,9 +521,12 @@ if __name__ == "__main__":
                 all_vehicles_ai_data[vehicle_name] = vehicle_ai_data
             if vehicle_name and vehicle_loudness_data: # Store loudness data
                 all_vehicles_loudness_data[vehicle_name] = vehicle_loudness_data
+            # Store the AI details data
+            if vehicle_name and vehicle_ai_details_data: # <-- STORE AI DETAILS
+                all_vehicles_ai_details_data[vehicle_name] = vehicle_ai_details_data
 
             # Update base directory map if processing was successful for a directory
-            if vehicle_name and base_dir and (vehicle_octave_data or vehicle_narrowband_data or vehicle_ai_data or vehicle_loudness_data):
+            if vehicle_name and base_dir and (vehicle_octave_data or vehicle_narrowband_data or vehicle_ai_data or vehicle_loudness_data or vehicle_ai_details_data): # Added ai_details check
                 if vehicle_name not in vehicle_base_dir_map:
                      vehicle_base_dir_map[vehicle_name] = base_dir
                      print(f"  Stored output base directory for '{vehicle_name}': {base_dir}")
@@ -530,7 +536,8 @@ if __name__ == "__main__":
                      print(f"  Updating base directory for '{vehicle_name}' to: {base_dir}")
                      vehicle_base_dir_map[vehicle_name] = base_dir
 
-            elif vehicle_name is None and vehicle_octave_data is None and vehicle_narrowband_data is None and vehicle_ai_data is None and vehicle_loudness_data is None and base_dir is None:
+            # Update the handling for the return tuple in the else/pass block if needed
+            elif vehicle_name is None and vehicle_octave_data is None and vehicle_narrowband_data is None and vehicle_ai_data is None and vehicle_loudness_data is None and vehicle_ai_details_data is None and base_dir is None: # Added ai_details check
                 pass # Invalid path or single file processing
             # else: # This case should be less likely now
             #     print(f"Warning: Inconsistent return from process_input_path for {path}")
@@ -610,17 +617,19 @@ if __name__ == "__main__":
 
 
         # --- Generate Comparison Plots ---
-        # Check based on octave data, but loudness comparison relies on loudness data
         num_vehicles_with_octave = len(all_vehicles_octave_data)
         num_vehicles_with_loudness = len(all_vehicles_loudness_data)
         num_vehicles_with_ai = len(all_vehicles_ai_data)
+        # Add count for AI details (should be same as AI if calculation worked)
+        num_vehicles_with_ai_details = len(all_vehicles_ai_details_data)
 
-        # Proceed if we have data for more than one vehicle for *any* comparison type
-        if num_vehicles_with_octave > 1 or num_vehicles_with_loudness > 1 or num_vehicles_with_ai > 1: # Add AI check
+        # Update the condition to check for AI details as well
+        if num_vehicles_with_octave > 1 or num_vehicles_with_loudness > 1 or num_vehicles_with_ai > 1 or num_vehicles_with_ai_details > 1:
             print(f"\n--- Generating Comparison Plots ---")
             print(f"  (Found {num_vehicles_with_octave} vehicles with Octave data)")
             print(f"  (Found {num_vehicles_with_loudness} vehicles with Loudness data)")
-            print(f"  (Found {num_vehicles_with_ai} vehicles with AI data)") # Add AI count print
+            print(f"  (Found {num_vehicles_with_ai} vehicles with AI data)")
+            print(f"  (Found {num_vehicles_with_ai_details} vehicles with AI Detail data)") # <-- ADDED count
 
             # Comparison plots go in a top-level directory relative to the script
             comparison_output_dir = os.path.join(SCRIPT_DIR, COMPARISON_SUBDIR)
@@ -822,6 +831,75 @@ if __name__ == "__main__":
                 print("\nFewer than two vehicles have AI data. Skipping AI comparison plot.")
             # --- End AI Comparison ---
 
+
+            # --- NEW: AI Detail Comparison Plots (One per common setting) ---
+            if num_vehicles_with_ai_details > 1:
+                # Find common settings based on *AI details* data specifically
+                settings_per_vehicle_ai_details = [
+                    set(data.keys()) for data in all_vehicles_ai_details_data.values() if data
+                ]
+                common_settings_ai_details = set()
+                if settings_per_vehicle_ai_details:
+                    try:
+                        # Start with intersection of keys
+                        valid_keys_sets_ai_details = [
+                            set(k for k in s if k is not None) for s in settings_per_vehicle_ai_details
+                        ]
+                        if valid_keys_sets_ai_details:
+                            common_settings_ai_details = set.intersection(*valid_keys_sets_ai_details)
+
+                            # Further filter: ensure data for the setting is valid (e.g., has spl_values)
+                            # This check might be overly strict, the plotting function handles missing data per vehicle
+                            # Keeping it simple for now, relying on the plotting function's robustness
+
+                    except TypeError:
+                        print("Warning: Could not compute intersection of settings for AI Detail comparison.")
+                        common_settings_ai_details = set()
+
+                if common_settings_ai_details:
+                    sorted_common_settings_ai_details = sorted(list(common_settings_ai_details), key=spl.get_setting_sort_key)
+                    print(f"\nCommon settings for AI Detail plots: {', '.join(map(str, sorted_common_settings_ai_details))}")
+                    print(f"Generating AI Detail comparison plots for {len(sorted_common_settings_ai_details)} common settings...")
+
+                    for setting in sorted_common_settings_ai_details:
+                        print(f"  Generating AI Detail comparison plot for Setting '{setting}'...")
+                        safe_setting = re.sub(r'[\\/*?:"<>|]+', FILENAME_SANITIZE_CHAR, str(setting))
+
+                        # Prepare data for the current setting
+                        current_setting_ai_details_data = {}
+                        for v_name, details_data in all_vehicles_ai_details_data.items():
+                            if details_data and setting in details_data and details_data[setting]:
+                                # Check if the details dict looks valid (e.g., has spl_values)
+                                if 'spl_values' in details_data[setting]:
+                                     current_setting_ai_details_data[v_name] = details_data[setting]
+                                else:
+                                     print(f"    Warning: AI details data for '{v_name}' setting '{setting}' seems incomplete. Skipping vehicle.")
+                            # else: # Optional: Print if data is missing entirely for a vehicle/setting combo
+                            #    print(f"    Info: No AI details data found for '{v_name}' setting '{setting}'.")
+
+
+                        # Only plot if we have data for more than one vehicle for this setting
+                        if len(current_setting_ai_details_data) > 1:
+                            comp_title = f"Vehicle Comparison - Setting '{setting}' - AI Band Details"
+                            comp_filename = os.path.join(comparison_output_dir, f"Comparison_Setting_{safe_setting}_AIDetail.svg")
+
+                            # Call the new library function
+                            spl.plot_comparison_ai_band_details(
+                                current_setting_ai_details_data,
+                                comp_title, comp_filename,
+                                SVG_WIDTH_INCHES, SVG_HEIGHT_INCHES,
+                                vehicle_color_map
+                                # Uses default y_min/y_max from the function definition
+                            )
+                        else:
+                            print(f"    Warning: Fewer than two vehicles have valid AI detail data for setting '{setting}'. Skipping AI Detail comparison plot.")
+                else:
+                    print("\nNo common settings with valid AI Detail data found across vehicles. Skipping AI Detail comparison plots.")
+            else:
+                print("\nFewer than two vehicles have AI Detail data. Skipping AI Detail comparison plots.")
+            # --- End AI Detail Comparison ---
+
+
             print("\nFinished generating comparison plots.")
 
         else: # Fewer than 2 vehicles processed overall
@@ -833,9 +911,8 @@ if __name__ == "__main__":
         try:
             input_path_str = input("Enter a single .txt file path OR a directory path containing .txt files:\n")
             input_path = input_path_str.strip().strip('\'"')
-            # Call local processing function, ignore comparison data return
-            # Interactive mode doesn't generate overall AI/Loudness plots or comparisons
-            gain_offsets_db, _, _, _, _, _, _ = process_input_path( # Added _ for loudness
+            # Update the number of ignored return values
+            gain_offsets_db, _, _, _, _, _, _, _ = process_input_path( # Added _ for ai_details
                 input_path, gain_offsets_db, band_definitions, {} # Pass empty color map
             )
         except EOFError:
