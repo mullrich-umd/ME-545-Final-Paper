@@ -15,9 +15,9 @@ import audio_spl_lib as spl # Use 'spl' as a prefix for library functions
 # --- User Configuration ---
 # Define a list of file or directory paths to process automatically.
 INPUT_PATHS = [
-    "/Users/max/Library/CloudStorage/GoogleDrive-mullrich@umich.edu/My Drive/Classes/W25 - ME 545/Term Paper/Ford Explorer",
-    "/Users/max/Library/CloudStorage/GoogleDrive-mullrich@umich.edu/My Drive/Classes/W25 - ME 545/Term Paper/Test-Analysis Procedure - Data Tundra and Odyssey/Honda Odysee", # Corrected typo? "Odyssey"
-    "/Users/max/Library/CloudStorage/GoogleDrive-mullrich@umich.edu/My Drive/Classes/W25 - ME 545/Term Paper/Test-Analysis Procedure - Data Tundra and Odyssey/Toyota Tundra"
+    "Vehicle Data/Ford Explorer",
+    "Vehicle Data/Honda Odysee", # Corrected typo? "Odyssey"
+    "Vehicle Data/Toyota Tundra"
 ]
 
 SVG_WIDTH_INCHES = 8
