@@ -16,7 +16,7 @@ import audio_spl_lib as spl # Use 'spl' as a prefix for library functions
 # Define a list of file or directory paths to process automatically.
 INPUT_PATHS = [
     "Vehicle Data/Ford Explorer",
-    "Vehicle Data/Honda Odysee", # Corrected typo? "Odyssey"
+    "Vehicle Data/Honda Odyssey",
     "Vehicle Data/Toyota Tundra"
 ]
 
